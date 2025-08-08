@@ -18,15 +18,15 @@
 #define DLL_API  __declspec(dllimport)
 #endif
 
-class DLL_API RSACryptoOAEP {
+class  RSACryptoOAEP {
 public:
     RSACryptoOAEP();
 
-    RSACryptoOAEP(std::string PuPP, std::string PrPP);
+    RSACryptoOAEP(const std::string& pubk, const std::string& privk);
 
     ~RSACryptoOAEP();
 
-    void set_key_path(std::string pupp, std::string prpp);
+    void set_key_path(const std::string& pupp, const std::string& prpp);
 
     /**
      * 生成 RSA 密钥对并写入 pem 文件
@@ -55,7 +55,7 @@ public:
     /*加密函数*/
     std::vector<unsigned char> encrypt(const std::string& plain);
 
-    std::vector<unsigned char> encrypt(const std::string& keypath, const std::vector<unsigned char>& plain);
+    std::vector<unsigned char> encrypt(const std::string& key, const std::vector<unsigned char>& plain);
 
     /*解密函数*/
     std::vector<unsigned char> decrypt(const std::vector<unsigned char>& cipher);
@@ -63,8 +63,15 @@ public:
     /*解密函数*/
     std::vector<unsigned char> decrypt(const std::string& cipher);
 
-    std::vector<unsigned char> decrypt(const std::string& keypath, const std::vector<unsigned char>& cipher);
+    std::vector<unsigned char> decrypt(const std::string& key, const std::vector<unsigned char>& cipher);
 
+    /*写签名*/
+    std::vector<unsigned char> signature(const std::vector<unsigned char>& orig);
+    
+    /*验签名*/
+    bool designature(const std::vector<unsigned char>& orig,
+        const std::vector<unsigned char>& cipher);
+    
     /*打印密文*/
     void print_plain(std::vector<unsigned char> cipher);
 

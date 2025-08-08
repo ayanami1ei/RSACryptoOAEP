@@ -1,15 +1,28 @@
-﻿#define BUILD_DLL
+﻿//#define BUILD_DLL
 
 #include "RSACryptoOAEP.h"
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/err.h>
+#include <openssl/provider.h>
 
 class RSACryptoOAEP::Impl
 {
 private:
+    
+
 public:
+
+    void init_openssl() {
+        OSSL_PROVIDER* legacy = OSSL_PROVIDER_load(nullptr, "legacy");
+        OSSL_PROVIDER* default_provider = OSSL_PROVIDER_load(nullptr, "default");
+        if (!default_provider) {
+            std::cerr << "Failed to load default OpenSSL provider\n";
+            exit(1);
+        }
+    }
+    std::string privatekey, publickey;
     std::string PrivpemPath, PubpemPath;
     EVP_PKEY* pub;
     EVP_PKEY* priv;
@@ -24,9 +37,11 @@ public:
 
     /*加载公钥*/
     EVP_PKEY* load_pub(const std::string& path);
+    EVP_PKEY* load_pub();
 
     /*加载私钥*/
     EVP_PKEY* load_priv(const std::string& path);
+    EVP_PKEY* load_priv();
 
     /*初始化公钥私钥*/
     void init();
@@ -54,12 +69,12 @@ public:
     /*加密函数*/
     std::vector<unsigned char> rsa_encrypt_oaep(const std::vector<unsigned char>& plain);
 
-    std::vector<unsigned char> rsa_encrypt_oaep(const std::string& ketpath, const std::vector<unsigned char>& cipher);
+    std::vector<unsigned char> rsa_encrypt_oaep(const std::string& key, const std::vector<unsigned char>& cipher);
 
     /*解密函数*/
     std::vector<unsigned char> rsa_decrypt_oaep(const std::vector<unsigned char>& cipher);
 
-    std::vector<unsigned char> rsa_decrypt_oaep(const std::string& ketpath, const std::vector<unsigned char>& cipher);
+    std::vector<unsigned char> rsa_decrypt_oaep(const std::string& key, const std::vector<unsigned char>& cipher);
 
     void write_bytes_to_file(const std::string& filename, const std::vector<unsigned char>& data);
 
@@ -68,6 +83,11 @@ public:
     bool is_file_equal(const std::string& file1, const std::string& file2);
 
     bool is_equal(const std::vector<unsigned char>& a, const std::vector<unsigned char>& b);
+
+    std::vector<unsigned char> signature(const std::vector<unsigned char>& orig);
+
+    bool designature(const std::vector<unsigned char>& orig,
+        const std::vector<unsigned char>& cipher);
 };
 
 // private:
@@ -118,6 +138,7 @@ void RSACryptoOAEP::Impl::openssl_error()
 
 EVP_PKEY* RSACryptoOAEP::Impl::load_pub(const std::string& path)
 {
+#if 1
     try
     {
         FILE* file = fopen(path.c_str(), "rb");
@@ -148,6 +169,28 @@ EVP_PKEY* RSACryptoOAEP::Impl::load_pub(const std::string& path)
 
         return nullptr;
     }
+#endif
+}
+
+EVP_PKEY* RSACryptoOAEP::Impl::load_pub()
+{
+    BIO* bio = BIO_new_mem_buf(publickey.data(), static_cast<int>(publickey.size()));
+    pub = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
+
+    if (!pub) {
+        // 解析失败，处理错误
+
+		std::cerr << "Failed to load public key from memory buffer.\n";
+        return nullptr;
+    }
+
+    if (EVP_PKEY_base_id(pub) != EVP_PKEY_RSA) {
+        std::cerr << "不是 RSA 密钥" << std::endl;
+    }
+
+
+    BIO_free(bio);
+    return pub;
 }
 
 EVP_PKEY* RSACryptoOAEP::Impl::load_priv(const std::string& path)
@@ -175,14 +218,37 @@ EVP_PKEY* RSACryptoOAEP::Impl::load_priv(const std::string& path)
     return k;*/
 }
 
+EVP_PKEY* RSACryptoOAEP::Impl::load_priv()
+{
+    BIO* bio = BIO_new_mem_buf(privatekey.data(), static_cast<int>(privatekey.size()));
+    priv = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+
+    if (EVP_PKEY_base_id(priv) != EVP_PKEY_RSA) {
+        std::cerr << "不是 RSA 密钥" << std::endl;
+    }
+
+    if (!priv) {
+        // 解析失败，处理错误
+
+        std::cerr << "Failed to load private key from memory buffer.\n";
+        return nullptr;
+    }
+
+    BIO_free(bio);
+
+    return priv;
+}
+
 void RSACryptoOAEP::Impl::init()
 {
     try
     {
-        pub = load_pub(PubpemPath);
+        //pub = load_pub(PubpemPath);
+		pub = load_pub();
         if (!pub)
             throw std::runtime_error("无法打开公钥文件");
-        priv = load_priv(PrivpemPath);
+        //priv = load_priv(PrivpemPath);
+		priv = load_priv();
         if (!priv)
             throw std::runtime_error("无法打开私钥文件");
     }
@@ -215,9 +281,15 @@ std::vector<unsigned char> RSACryptoOAEP::Impl::rsa_encrypt_oaep(const std::vect
     return cipher;
 }
 
-std::vector<unsigned char> RSACryptoOAEP::Impl::rsa_encrypt_oaep(const std::string& ketpath, const std::vector<unsigned char>& plain)
+std::vector<unsigned char> RSACryptoOAEP::Impl::rsa_encrypt_oaep(const std::string& key, const std::vector<unsigned char>& plain)
 {
-    pub = load_pub(PubpemPath);
+	publickey = key;
+    auto ret = load_pub();
+    if (!ret)
+    {
+        std::cerr << "Failed to load public key.\n";
+        return {};
+	}
 
     EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pub, nullptr);
     if (!ctx)
@@ -281,9 +353,15 @@ std::vector<unsigned char> RSACryptoOAEP::Impl::rsa_decrypt_oaep(const std::vect
     return plain;
 }
 
-std::vector<unsigned char> RSACryptoOAEP::Impl::rsa_decrypt_oaep(const std::string& ketpath, const std::vector<unsigned char>& cipher)
+std::vector<unsigned char> RSACryptoOAEP::Impl::rsa_decrypt_oaep(const std::string& key, const std::vector<unsigned char>& cipher)
 {
-	priv = load_priv(ketpath);
+    privatekey = key;
+	auto ret = load_priv();
+    if (!ret)
+    {
+        std::cerr << "Failed to load private key.\n";
+		return {};
+    }
 
     EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(priv, nullptr);
     if (!ctx)
@@ -322,6 +400,151 @@ std::vector<unsigned char> RSACryptoOAEP::Impl::rsa_decrypt_oaep(const std::stri
     plain.resize(outlen);
     EVP_PKEY_CTX_free(ctx);
     return plain;
+}
+
+std::vector<unsigned char> RSACryptoOAEP::Impl::signature(const std::vector<unsigned char>& orig)
+{
+    auto ret1 = load_priv();
+
+    if (!ret1)
+    {
+        std::cerr << "Failed to load private key.\n";
+        return {};
+    }
+
+#if 0
+
+    // 手动对数据做哈希
+    unsigned char hash[32];
+    EVP_Digest(orig.data(), orig.size(), hash, NULL, EVP_sha256(), NULL);
+
+    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(priv, nullptr);
+    EVP_PKEY_sign_init(ctx);
+
+    // 可选：设置签名算法和参数（如果需要）
+    // 比如 RSA+PKCS1 padding
+    EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING);
+    //EVP_PKEY_CTX_set_signature_md(ctx, EVP_sha256());
+    EVP_PKEY_CTX_set_signature_md(ctx, NULL); // ← 不要重复 hash
+
+
+
+    // 第一步：获取签名长度
+    size_t siglen = 0;
+    EVP_PKEY_sign(ctx, nullptr, &siglen, hash, 32);
+
+    // 第二步：分配内存并签名
+    unsigned char* sig = (unsigned char*)OPENSSL_malloc(siglen);
+    int ret = EVP_PKEY_sign(ctx, sig, &siglen, hash, 32);
+
+    if (ret <= 0) {
+        // 签名失败，打印错误
+        ERR_print_errors_fp(stderr);
+		OPENSSL_free(sig);
+        return {};
+    }
+
+    EVP_PKEY_CTX_free(ctx);
+
+    std::vector<unsigned char> r = std::vector<unsigned char>(sig, sig + siglen);
+
+    return r;
+#endif
+
+    std::vector<unsigned char>signature;
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) return {};
+
+    bool success = false;
+    do {
+        if (EVP_DigestSignInit(ctx, nullptr, EVP_sha256(), nullptr, priv) <= 0) break;
+
+        if (EVP_DigestSignUpdate(ctx, orig.data(), orig.size()) <= 0) break;
+
+        size_t sig_len = 0;
+        if (EVP_DigestSignFinal(ctx, nullptr, &sig_len) <= 0) break;
+
+        signature.resize(sig_len);
+        if (EVP_DigestSignFinal(ctx, signature.data(), &sig_len) <= 0) break;
+
+        signature.resize(sig_len);  // Trim to actual size
+        success = true;
+    } while (false);
+
+    EVP_MD_CTX_free(ctx);
+
+    std::cout << signature.size() << std::endl;
+
+    return signature;
+
+}
+
+bool RSACryptoOAEP::Impl::designature(const std::vector<unsigned char>& orig,
+    const std::vector<unsigned char>& cipher)
+{
+    auto ret = load_pub();
+    if (!ret)
+    {
+        std::cerr << "Failed to load public key.\n";
+        return {};
+    }
+
+#if 0
+    unsigned char hash[32];
+    EVP_Digest(orig.data(), orig.size(), hash, NULL, EVP_sha256(), NULL);
+
+    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pub, nullptr);
+    EVP_PKEY_verify_init(ctx);
+
+    // 设置同样的 padding 和 hash
+    EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING);
+    //EVP_PKEY_CTX_set_signature_md(ctx, EVP_sha256());
+    EVP_PKEY_CTX_set_signature_md(ctx, NULL); // ← 不要重复 hash
+
+
+    int ret1 = EVP_PKEY_verify(ctx,cipher.data(), cipher.size(), hash, 32);
+    
+    EVP_PKEY_CTX_free(ctx);
+
+    if (ret1 == 1) {
+        // 验证成功
+		return true;
+    }
+    else if (ret1 == 0) {
+        // 验证失败
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    else {
+        // 错误
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+#endif
+    
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) return false;
+
+    bool valid = false;
+    do {
+        if (EVP_DigestVerifyInit(ctx, nullptr, EVP_sha256(), nullptr, pub) <= 0) break;
+
+        if (EVP_DigestVerifyUpdate(ctx, orig.data(), orig.size()) <= 0) break;
+
+        int ret = EVP_DigestVerifyFinal(ctx, cipher.data(), cipher.size());
+        valid = (ret == 1);
+    } while (false);
+
+    EVP_MD_CTX_free(ctx);
+
+    if (!valid)
+    {
+        ERR_print_errors_fp(stderr);
+        std::cout << cipher.size() << std::endl;
+    }
+    return valid;
+
 }
 
 
@@ -429,7 +652,7 @@ void RSACryptoOAEP::Impl::generateRSAKeyPair(const std::string& privPath,
     FILE* fpPriv = fopen(PrivpemPath.c_str(), "wb");
     if (!fpPriv)
         perror("fopen"), exit(1);
-    if (!i2d_PrivateKey_fp(fpPriv, pkey))
+    if (!PEM_write_PrivateKey(fpPriv, pkey, nullptr, nullptr, 0, nullptr, nullptr))
         openssl_error();
     fclose(fpPriv);
 
@@ -441,7 +664,7 @@ void RSACryptoOAEP::Impl::generateRSAKeyPair(const std::string& privPath,
     FILE* fpPub = fopen(PubpemPath.c_str(), "wb");
     if (!fpPub)
         perror("fopen"), exit(1);
-    if (!i2d_PUBKEY_fp(fpPub, pkey))
+    if (!PEM_write_PUBKEY(fpPub, pkey))
         openssl_error();
     fclose(fpPub);
 
@@ -484,19 +707,39 @@ bool RSACryptoOAEP::Impl::is_equal(const std::vector<unsigned char>& a, const st
 // public:
 RSACryptoOAEP::RSACryptoOAEP()
 {
+   // OSSL_PROVIDER_load(NULL, "legacy");
+    
+    pImpl = new Impl();
+
+    pImpl->init_openssl();
+#if 1
     // OpenSSL_add_all_algorithms();
     // ERR_load_crypto_strings();
 
     try
     {
-        pImpl = new Impl();
+        
 
         pImpl->PrivpemPath = "./private.der";
         pImpl->PubpemPath = "./public.der";
 
         // pImpl->generateRSAKeyPair(nullptr);
 
-        pImpl->init();
+        try
+        {
+            //pub = load_pub(PubpemPath);
+            pImpl->pub = pImpl->load_pub(pImpl->PubpemPath);
+            if (!pImpl->pub)
+                throw std::runtime_error("无法打开公钥文件");
+            //priv = load_priv(PrivpemPath);
+            pImpl->priv = pImpl->load_priv(pImpl->PrivpemPath);
+            if (!pImpl->priv)
+                throw std::runtime_error("无法打开私钥文件");
+        }
+        catch (std::exception& ex)
+        {
+            std::cerr << "[Error]" << ex.what() << std::endl;
+        }
 
         if (!pImpl->pub || !pImpl->priv)
             throw std::runtime_error("初始化失败");
@@ -506,16 +749,17 @@ RSACryptoOAEP::RSACryptoOAEP()
         throw std::runtime_error("无法构造");
         std::cerr << "[Error]" << ex.what() << std::endl;
     }
+#endif
 }
 
-RSACryptoOAEP::RSACryptoOAEP(std::string PuPP, std::string PrPP)
+RSACryptoOAEP::RSACryptoOAEP(const std::string& pubk, const std::string& privk)
 {
     try
     {
         pImpl = new Impl();
 
-        pImpl->PubpemPath = PuPP;
-        pImpl->PrivpemPath = PrPP;
+        pImpl->publickey = pubk;
+        pImpl->privatekey = privk;
         // pImpl->generateRSAKeyPair(nullptr);
 
         pImpl->init();
@@ -530,7 +774,7 @@ RSACryptoOAEP::RSACryptoOAEP(std::string PuPP, std::string PrPP)
     }
 }
 
-void RSACryptoOAEP::set_key_path(std::string pupp, std::string prpp)
+void RSACryptoOAEP::set_key_path(const std::string& pupp, const std::string& prpp)
 {
     pImpl->PrivpemPath = prpp;
     pImpl->PubpemPath = pupp;
@@ -560,9 +804,9 @@ std::vector<unsigned char> RSACryptoOAEP::encrypt(const std::string& plain)
     return pImpl->rsa_encrypt_oaep(msg);
 }
 
-std::vector<unsigned char> RSACryptoOAEP::encrypt(const std::string& keypath, const std::vector<unsigned char>& plain)
+std::vector<unsigned char> RSACryptoOAEP::encrypt(const std::string& key, const std::vector<unsigned char>& plain)
 {
-    return pImpl->rsa_encrypt_oaep(keypath, plain);
+    return pImpl->rsa_encrypt_oaep(key, plain);
 }
 
 
@@ -585,11 +829,11 @@ std::vector<unsigned char> RSACryptoOAEP::decrypt(const std::string& cipher)
     return pImpl->rsa_encrypt_oaep(msg);
 }
 
-std::vector<unsigned char> RSACryptoOAEP::decrypt(const std::string& keypath, const std::vector<unsigned char>& cipher)
+std::vector<unsigned char> RSACryptoOAEP::decrypt(const std::string& key, const std::vector<unsigned char>& cipher)
 {
     try
     {
-        return pImpl->rsa_decrypt_oaep(keypath,cipher);
+        return pImpl->rsa_decrypt_oaep(key,cipher);
     }
     catch (std::exception& ex)
     {
@@ -597,6 +841,19 @@ std::vector<unsigned char> RSACryptoOAEP::decrypt(const std::string& keypath, co
 
 		return {};
     }
+}
+
+/*写签名*/
+std::vector<unsigned char> RSACryptoOAEP::signature(const std::vector<unsigned char>& orig)
+{
+	return pImpl->signature(orig);
+}
+
+/*验签名*/
+bool RSACryptoOAEP::designature(const std::vector<unsigned char>& orig,
+    const std::vector<unsigned char>& cipher)
+{
+	return pImpl->designature(orig, cipher);
 }
 
 void RSACryptoOAEP::print_plain(std::vector<unsigned char> cipher)
